@@ -25,14 +25,37 @@ export async function createReception(input:{reference:string;vehicle?:string;re
   return reception;
 }
 
+export async function updateReception(input:{id:string;reference:string;vehicle?:string;receivedAt:string;expectedPallets:number;notes:string},operator:string) {
+  const current=await db.receptions.get(input.id);if(!current||current.deletedAt)throw new Error('Recepción no encontrada.');
+  if(current.status==='cerrada')throw new Error('Desbloquea la recepción antes de editarla.');
+  const clean=receptionInputSchema.parse(input);const all=await db.pallets.where('receptionId').equals(input.id).toArray();const active=all.filter(p=>!p.deletedAt).sort((a,b)=>a.number-b.number);
+  const now=iso();const additions:Pallet[]=[];const restorations:Pallet[]=[];const removals:Pallet[]=[];
+  if(clean.expectedPallets>active.length){
+    const reusable=all.filter(p=>p.deletedAt&&!p.parcels&&!p.locationId&&!p.scanClosedAt&&!p.taskStatus).sort((a,b)=>a.number-b.number);
+    while(active.length+restorations.length<clean.expectedPallets&&reusable.length){const pallet=reusable.shift()!;restorations.push({...pallet,deletedAt:null,updatedAt:now,version:pallet.version+1,operator})}
+    const usedNumbers=new Set(all.map(p=>p.number));let number=Math.max(0,...usedNumbers)+1;
+    while(active.length+restorations.length+additions.length<clean.expectedPallets){while(usedNumbers.has(number))number++;usedNumbers.add(number);additions.push({id:crypto.randomUUID(),createdAt:now,updatedAt:now,deletedAt:null,version:1,code:`PAL-${clean.reference}-${String(number).padStart(3,'0')}`,number,receptionId:current.id,status:'pendiente',article:'',parcels:0,units:0,notes:'',operator});number++}
+  }else if(clean.expectedPallets<active.length){
+    const candidates=[...active].sort((a,b)=>b.number-a.number).slice(0,active.length-clean.expectedPallets);
+    if(candidates.some(p=>p.parcels>0||p.locationId||p.scanClosedAt||p.taskStatus))throw new Error('No se pueden quitar palés que ya tengan cajas, ubicación, cierre o tareas. Reduce primero solo los últimos palés vacíos.');
+    removals.push(...candidates.map(p=>({...p,deletedAt:now,updatedAt:now,version:p.version+1})));
+  }
+  const updated:Reception={...current,...clean,updatedAt:now,version:current.version+1};
+  const movements:Movement[]=additions.map(p=>({id:crypto.randomUUID(),createdAt:now,updatedAt:now,deletedAt:null,version:1,palletId:p.id,type:'creacion',reason:'Palé añadido al editar la recepción',operator,deviceId:deviceId()}));
+  await db.transaction('rw',[db.receptions,db.pallets,db.movements,db.operations],async()=>{
+    await db.receptions.put(updated);if(additions.length)await db.pallets.bulkAdd(additions);if(restorations.length||removals.length)await db.pallets.bulkPut([...restorations,...removals]);if(movements.length)await db.movements.bulkAdd(movements);
+    await db.operations.bulkAdd([operation('reception',updated),...additions.map(p=>operation('pallet',p)),...restorations.map(p=>operation('pallet',p)),...removals.map(p=>operation('pallet',p)),...movements.map(m=>operation('movement',m))]);
+  });return updated;
+}
+
 export async function scanParcel(input:{palletId:string;code:string;article:string;mocacota?:string;color?:string;size?:string;units:number;operator:string;acceptAnomaly?:boolean}) {
   const clean = scanInputSchema.parse(input);
-  const duplicate = await db.parcels.where('code').equalsIgnoreCase(clean.code).first();
-  if (duplicate && !duplicate.voidedAt) throw new Error(`El bulto ${clean.code} ya está registrado.`);
   const pallet = await db.pallets.get(input.palletId);
   if (!pallet) throw new Error('No se encuentra el palé seleccionado.');
   if (pallet.status === 'extraido') throw new Error('El palé ya está extraído y no admite lecturas.');
   if (pallet.scanClosedAt) throw new Error('El palé está cerrado. Sólo un manager puede reabrirlo.');
+  const duplicate = await db.parcels.where('code').equalsIgnoreCase(clean.code).filter(item=>item.palletId===pallet.id&&!item.voidedAt&&!item.deletedAt).first();
+  if (duplicate) throw new Error(`El bulto ${clean.code} ya está registrado en este palé.`);
   const receptionPalletIds=await db.pallets.where('receptionId').equals(pallet.receptionId).primaryKeys();
   const firstParcel=await db.parcels.where('palletId').anyOf(receptionPalletIds).first();
   const patternMismatch=Boolean(firstParcel&&(firstParcel.code.length!==clean.code.length||/^\d+$/.test(firstParcel.code)!==/^\d+$/.test(clean.code)));
@@ -97,7 +120,7 @@ export async function extractPallet(palletId:string,parcelCount:number,reason:st
 
 export async function closeReception(id:string) {
   const item=await db.receptions.get(id);if(!item)throw new Error('Recepción no encontrada.');
-  const pallets=await db.pallets.where('receptionId').equals(id).toArray();
+  const pallets=(await db.pallets.where('receptionId').equals(id).toArray()).filter(p=>!p.deletedAt);
   if(pallets.length!==item.expectedPallets||pallets.some(p=>!p.scanClosedAt||p.status!=='ubicado'))throw new Error('Para cerrar el camión, todos los palés deben estar completos y ubicados.');
   const now=iso();const updated={...item,status:'cerrada' as const,lockedAt:now,updatedAt:now,version:item.version+1};
   await db.transaction('rw',[db.receptions,db.operations],async()=>{await db.receptions.put(updated);await db.operations.add(operation('reception',updated));});

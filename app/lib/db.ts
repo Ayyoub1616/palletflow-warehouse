@@ -19,6 +19,16 @@ export class PalletFlowDB extends Dexie {
       movements: 'id, palletId, type, createdAt, demo',
       operations: 'id, entityId, entityType, createdAt, attempts',
     });
+    // Los códigos de bulto de Inditex pueden repetirse: cada lectura física
+    // queda identificada por su propio id y por el palé al que pertenece.
+    this.version(2).stores({
+      receptions: 'id, reference, status, updatedAt, demo',
+      pallets: 'id, &code, receptionId, status, locationId, article, updatedAt, demo',
+      parcels: 'id, code, palletId, article, updatedAt, demo',
+      locations: 'id, &code, status, zone, updatedAt, demo',
+      movements: 'id, palletId, type, createdAt, demo',
+      operations: 'id, entityId, entityType, createdAt, attempts',
+    });
   }
 }
 
