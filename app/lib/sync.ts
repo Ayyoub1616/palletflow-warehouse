@@ -4,7 +4,7 @@ import { apiUrl } from './api';
 
 const tables = { reception:db.receptions, pallet:db.pallets, parcel:db.parcels, location:db.locations, movement:db.movements } as const;
 
-export async function syncNow(_operator='operario') {
+export async function syncNow() {
   if (!navigator.onLine) return { synced:0, conflicts:[] as string[] };
   const pending = await db.operations.orderBy('createdAt').limit(200).toArray();
   if (pending.length) {
@@ -23,8 +23,8 @@ export async function syncNow(_operator='operario') {
   return { synced:pending.length, conflicts:[] as string[] };
 }
 
-export async function uploadCloudBackup(operator:string){
-  await syncNow(operator);
+export async function uploadCloudBackup(){
+  await syncNow();
   const snapshot={receptions:await db.receptions.toArray(),pallets:await db.pallets.toArray(),parcels:await db.parcels.toArray(),locations:await db.locations.toArray(),movements:await db.movements.toArray()};
   const response=await fetch(apiUrl('/api/backup'),{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify(snapshot)});
   const body=await response.json() as {error?:string;createdAt?:string};if(!response.ok)throw new Error(body.error||'No se pudo subir la copia.');return body;
