@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { ensureSchema, getD1 } from '../../../db/runtime';
 import type { EntityRow } from '../../../db/schema';
+import { currentProfile } from '../_lib/access';
 
 export const dynamic = 'force-dynamic';
-const cors={'access-control-allow-origin':'https://ayyoub1616.github.io','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type,x-operator-name'};
+const cors={'access-control-allow-origin':'https://ayyoub1616.github.io','access-control-allow-credentials':'true','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type'};
 const json=(data:unknown,init?:ResponseInit)=>Response.json(data,{...init,headers:{...cors,...init?.headers}});
 export async function OPTIONS(){return new Response(null,{status:204,headers:cors})}
 
@@ -14,22 +15,26 @@ const operationSchema = z.object({
 });
 
 export async function GET() {
+  if(!await currentProfile())return json({error:'Debes identificarte para sincronizar.'},{status:401});
   await ensureSchema();
   const rows = await getD1().prepare('SELECT * FROM entities ORDER BY updated_at ASC').all<EntityRow>();
   return json({ entities: rows.results.map((row) => ({ id: row.id, entityType: row.entity_type, data: JSON.parse(row.data_json), version: row.version, updatedAt: row.updated_at, deletedAt: row.deleted_at })) });
 }
 
 export async function POST(request: Request) {
-  const operator=(request.headers.get('x-operator-name')||'operario').trim().slice(0,80);
+  const profile=await currentProfile();if(!profile)return json({error:'Debes identificarte para sincronizar.'},{status:401});
+  const operator=profile.display_name;
   const body = z.object({ operations: z.array(operationSchema).max(200) }).safeParse(await request.json());
   if (!body.success) return json({ error: 'Lote de sincronización no válido.' }, { status: 400 });
   await ensureSchema();
   const db = getD1();
   const conflicts: string[] = [];
   for (const op of body.data.operations) {
+    if(profile.role!=='manager'&&op.action==='delete')return json({error:'Un operario no puede borrar información.'},{status:403});
     const seen = await db.prepare('SELECT id FROM operations WHERE id=?').bind(op.id).first();
     if (seen) continue;
     const existing = await db.prepare('SELECT version FROM entities WHERE id=?').bind(op.entityId).first<{version:number}>();
+    if(profile.role!=='manager'&&op.entityType==='reception'&&existing)return json({error:'Solo Ayyoub puede modificar una recepción existente.'},{status:403});
     if (existing && existing.version >= op.version) { conflicts.push(op.entityId); continue; }
     await db.batch([
       db.prepare(`INSERT INTO entities (id,entity_type,data_json,version,updated_at,deleted_at) VALUES (?,?,?,?,?,?)

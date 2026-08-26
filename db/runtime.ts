@@ -20,10 +20,14 @@ const statements = [
     id TEXT PRIMARY KEY, operator_name TEXT NOT NULL, data_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS login_attempts (
+    id TEXT PRIMARY KEY, ip_address TEXT NOT NULL, created_at TEXT NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_profiles_status ON profiles(status)`,
   `CREATE INDEX IF NOT EXISTS idx_entities_type_updated ON entities(entity_type, updated_at)`,
   `CREATE INDEX IF NOT EXISTS idx_operations_created ON operations(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_cloud_backups_created ON cloud_backups(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_created ON login_attempts(ip_address,created_at)`,
 ];
 
 let ready: Promise<void> | null = null;
