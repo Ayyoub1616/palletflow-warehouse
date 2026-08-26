@@ -1,0 +1,12 @@
+export type Role = 'operario' | 'coordinador' | 'manager';
+export type Permission = 'recepciones' | 'escanear' | 'ubicar' | 'extraer' | 'inventario' | 'exportar' | 'usuarios';
+export type Profile = { id:string; email:string; displayName:string; role:Role; permissions:Permission[]; status:'pending'|'active'|'blocked'; createdAt:string; updatedAt:string };
+export type BaseEntity = { id:string; createdAt:string; updatedAt:string; deletedAt:string|null; version:number; demo?:boolean };
+export type Reception = BaseEntity & { reference:string; vehicle?:string; receivedAt:string; expectedPallets:number; notes:string; status:'borrador'|'descarga'|'completada'|'cerrada'; lockedAt?:string; extractionUnlockedAt?:string };
+export type Pallet = BaseEntity & { code:string; number:number; receptionId:string; status:'pendiente'|'escaneado'|'ubicado'|'en_suelo'|'extraido'; article:string; mocacota?:string; color?:string; size?:string; expectedParcels?:number; scanClosedAt?:string; parcels:number; units:number; tone?:string; notes:string; operator:string; locationId?:string; locatedAt?:string; floorAt?:string; extractedAt?:string; taskStatus?:'pendiente'|'en_curso'|'completada'; taskAssignee?:string; taskCreatedBy?:string; taskCreatedAt?:string };
+export type Parcel = BaseEntity & { code:string; palletId:string; article:string; mocacota?:string; color?:string; size?:string; units:number; operator:string; anomalous:boolean; voidedAt?:string };
+export type BarcodeRule = { articleLength:number; unitsFromEnd:number; unitsLength:number };
+export type Location = BaseEntity & { code:string; zone:string; aisle:string; module:string; level:string; slot:string; capacity:number; multiple:boolean; status:'disponible'|'ocupada'|'bloqueada' };
+export type Movement = BaseEntity & { palletId:string; type:'creacion'|'escaneo'|'cierre_pale'|'ubicacion'|'movimiento'|'orden_extraccion'|'suelo'|'extraccion'|'anulacion'; fromLocationId?:string; toLocationId?:string; parcels?:number; reason:string; operator:string; deviceId:string };
+export type EntityType = 'reception'|'pallet'|'parcel'|'location'|'movement';
+export type PendingOperation = { id:string; entityId:string; entityType:EntityType; action:'upsert'|'delete'; data:Record<string,unknown>; version:number; deviceId:string; createdAt:string; attempts:number; lastError?:string };

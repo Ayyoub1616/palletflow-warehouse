@@ -1,0 +1,14 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '../app/lib/db';
+import { closePallet, createLocation, createReception, extractPallet, locatePallet, scanParcel, setExpectedParcels } from '../app/lib/warehouse';
+
+beforeEach(async()=>{await db.delete();await db.open()});
+
+describe('flujos de almacén',()=>{
+  const reception=(reference:string,pallets=1)=>createReception({reference,receivedAt:'2026-08-25',expectedPallets:pallets,notes:''},'Test');
+  it('crea una recepción con sus palés',async()=>{const item=await reception('TEST-001',2);expect(await db.pallets.where('receptionId').equals(item.id).count()).toBe(2);expect(await db.operations.count()).toBe(5)});
+  it('impide leer dos veces el mismo bulto',async()=>{const item=await reception('TEST-002');const pallet=await db.pallets.where('receptionId').equals(item.id).first();await scanParcel({palletId:pallet!.id,code:'BULTO-0001',article:'ART-01',units:12,operator:'Test'});await expect(scanParcel({palletId:pallet!.id,code:'BULTO-0001',article:'ART-01',units:12,operator:'Test'})).rejects.toThrow(/ya está registrado/)});
+  it('bloquea una ubicación ocupada',async()=>{const item=await reception('TEST-003',2);const pallets=await db.pallets.where('receptionId').equals(item.id).toArray();for(const [index,pallet] of pallets.entries()){await setExpectedParcels(pallet.id,1,'Test');await scanParcel({palletId:pallet.id,code:`BULTO-LOC-${index}`,article:'ART-01',units:12,operator:'Test'});await closePallet(pallet.id,'Test')}const location=await createLocation({code:'A-01',zone:'A',aisle:'01',module:'01',level:'01',slot:'01',capacity:1,multiple:false});await locatePallet(pallets[0].id,location.id,'Test');await expect(locatePallet(pallets[1].id,location.id,'Test')).rejects.toThrow(/ocupada/)});
+  it('registra una extracción completa y libera el hueco',async()=>{const item=await reception('TEST-004');const pallet=await db.pallets.where('receptionId').equals(item.id).first();await setExpectedParcels(pallet!.id,1,'Test');await scanParcel({palletId:pallet!.id,code:'BULTO-0002',article:'ART-01',units:10,operator:'Test'});await closePallet(pallet!.id,'Test');const location=await createLocation({code:'B-01',zone:'B',aisle:'01',module:'01',level:'01',slot:'01',capacity:1,multiple:false});await locatePallet(pallet!.id,location.id,'Test');await extractPallet(pallet!.id,1,'Pedido','Test');expect((await db.pallets.get(pallet!.id))?.status).toBe('extraido');expect((await db.locations.get(location.id))?.status).toBe('disponible')});
+  it('no permite ubicar un palé abierto',async()=>{const item=await reception('TEST-005');const pallet=await db.pallets.where('receptionId').equals(item.id).first();const location=await createLocation({code:'C-01',zone:'C',aisle:'01',module:'01',level:'01',slot:'01',capacity:1,multiple:false});await expect(locatePallet(pallet!.id,location.id,'Test')).rejects.toThrow(/Cierra primero/)});
+});
