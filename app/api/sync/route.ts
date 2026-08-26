@@ -28,21 +28,18 @@ export async function POST(request: Request) {
   if (!body.success) return json({ error: 'Lote de sincronización no válido.' }, { status: 400 });
   await ensureSchema();
   const db = getD1();
-  const conflicts: string[] = [];
   for (const op of body.data.operations) {
     if(profile.role!=='manager'&&op.action==='delete')return json({error:'Un operario no puede borrar información.'},{status:403});
-    const seen = await db.prepare('SELECT id FROM operations WHERE id=?').bind(op.id).first();
-    if (seen) continue;
-    const existing = await db.prepare('SELECT version FROM entities WHERE id=?').bind(op.entityId).first<{version:number}>();
-    if(profile.role!=='manager'&&op.entityType==='reception'&&existing)return json({error:'Solo Ayyoub puede modificar una recepción existente.'},{status:403});
-    if (existing && existing.version >= op.version) { conflicts.push(op.entityId); continue; }
-    await db.batch([
-      db.prepare(`INSERT INTO entities (id,entity_type,data_json,version,updated_at,deleted_at) VALUES (?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET entity_type=excluded.entity_type,data_json=excluded.data_json,version=excluded.version,updated_at=excluded.updated_at,deleted_at=excluded.deleted_at`)
-        .bind(op.entityId,op.entityType,JSON.stringify(op.data),op.version,op.createdAt,op.action === 'delete' ? op.createdAt : null),
-      db.prepare('INSERT INTO operations (id,entity_id,action,payload_json,actor_user_id,device_id,created_at) VALUES (?,?,?,?,?,?,?)')
-        .bind(op.id,op.entityId,op.action,JSON.stringify(op.data),operator,op.deviceId,op.createdAt),
-    ]);
+    if(profile.role!=='manager'&&op.entityType==='reception'&&op.version>1)return json({error:'Solo Ayyoub puede modificar una recepción existente.'},{status:403});
   }
-  return json({ accepted: body.data.operations.length - conflicts.length, conflicts });
+  const statements=body.data.operations.flatMap(op=>[
+      db.prepare(`INSERT INTO entities (id,entity_type,data_json,version,updated_at,deleted_at) VALUES (?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET entity_type=excluded.entity_type,data_json=excluded.data_json,version=excluded.version,updated_at=excluded.updated_at,deleted_at=excluded.deleted_at
+        WHERE excluded.version > entities.version`)
+        .bind(op.entityId,op.entityType,JSON.stringify(op.data),op.version,op.createdAt,op.action === 'delete' ? op.createdAt : null),
+      db.prepare('INSERT OR IGNORE INTO operations (id,entity_id,action,payload_json,actor_user_id,device_id,created_at) VALUES (?,?,?,?,?,?,?)')
+        .bind(op.id,op.entityId,op.action,JSON.stringify(op.data),operator,op.deviceId,op.createdAt),
+  ]);
+  if(statements.length)await db.batch(statements);
+  return json({ accepted: body.data.operations.length, conflicts:[] });
 }
