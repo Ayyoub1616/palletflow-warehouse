@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ensureSchema,getD1 } from '../../../db/runtime';
-import { currentProfile } from '../_lib/access';
+import { currentProfile, requireManager } from '../_lib/access';
 
 export const dynamic='force-dynamic';
 const entity=z.record(z.string(),z.unknown());
@@ -10,7 +10,7 @@ const json=(data:unknown,init?:ResponseInit)=>Response.json(data,{...init,header
 export async function OPTIONS(){return new Response(null,{status:204,headers:cors})}
 
 export async function POST(request:Request){
-  const profile=await currentProfile();if(!profile)return json({error:'Debes identificarte para usar la nube.'},{status:401});
+  const profile=await requireManager();if(!profile)return json({error:'Solo Ayyoub puede sustituir la copia completa de seguridad.'},{status:403});
   if(Number(request.headers.get('content-length')||0)>10_000_000)return json({error:'La copia supera 10 MB.'},{status:413});
   const parsed=snapshotSchema.safeParse(await request.json());if(!parsed.success)return json({error:'La copia no tiene un formato válido.'},{status:400});
   const operator=profile.display_name;const createdAt=new Date().toISOString();
